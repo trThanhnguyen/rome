@@ -419,7 +419,7 @@ class ParametricAvatar(DECA):
         return detail_shape_target
 
     @torch.no_grad()
-    def decode(self, target_codedict, neutral_pose,
+    def decode(self, target_codedict, mesh, neutral_pose,
                deformer_nets=None, verts_deforms=None, neural_texture=None):
         batch_size = target_codedict['batch_size']
 
@@ -439,7 +439,8 @@ class ParametricAvatar(DECA):
             vertex_normals = util.vertex_normals(verts_template, faces)
             verts_deforms = verts_deforms * vertex_normals
 
-        verts_final = verts_template + verts_deforms
+        # verts_final = verts_template + verts_deforms
+        verts_final = mesh + verts_deforms
 
         _, verts_final_frontal, _ = util.batch_orth_proj(verts_final, default_cam, flame=self.flame)
         shape_final_frontal = self.render.render_shape(verts_final, verts_final_frontal)
@@ -512,6 +513,7 @@ class ParametricAvatar(DECA):
             source_keypoints,
             target_image,
             target_keypoints,
+            mesh,
             neutral_pose=False,
             deformer_nets=None,
             neural_texture=None,
@@ -564,6 +566,7 @@ class ParametricAvatar(DECA):
 
         opdict, visdict = self.decode(
             target_codedict,
+            mesh,
             neutral_pose,
             deformer_nets,
             neural_texture=neural_texture,

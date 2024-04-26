@@ -236,7 +236,7 @@ class ROME(nn.Module):
         ).eval()
 
     @torch.no_grad()
-    def forward(self, data_dict, neutral_pose: bool = False, source_information=None):
+    def forward(self, data_dict, mesh, neutral_pose: bool = False, source_information=None):
         if source_information is None:
             source_information = dict()
 
@@ -246,6 +246,7 @@ class ROME(nn.Module):
             data_dict['source_keypoints'],
             data_dict['target_img'],
             data_dict['target_keypoints'],
+            mesh,
             deformer_nets={
                 'neural_texture_encoder': self.autoencoder,
                 'unet_deformer': self.mesh_deformer,

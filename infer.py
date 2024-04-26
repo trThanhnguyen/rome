@@ -1,12 +1,14 @@
 import warnings
 
 import os
+import tqdm
 import importlib
 import argparse
 from glob import glob
 
 import face_alignment
 from torchvision import transforms
+from torchvision.utils import save_image
 from PIL import Image
 import numpy as np
 import torch
@@ -20,6 +22,7 @@ from src.rome import ROME
 from src.utils import args as args_utils
 from src.utils.processing import process_black_shape, prepare_input_data, tensor2image
 from src.utils.visuals import obtain_modnet_mask, mask_errosion
+from sandbox.read_mesh import read_obj_to_tensor
 
 warnings.filterwarnings("ignore")
 
@@ -63,7 +66,7 @@ class Infer(object):
 
         modnet.load_state_dict(torch.load(pretrained_ckpt, map_location='cpu'))
         self.modnet = modnet.eval().to(self.device)
-        self.fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D,
+        self.fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D,
                                                flip_input=False, device='cuda' if torch.cuda.is_available() else 'cpu')
 
     def process_source_for_input_dict(self, source_img: Image, data_transform, crop_center=False):
@@ -77,7 +80,7 @@ class Infer(object):
             center[1] -= size // 6
             source_img = source_img.crop((center[0] - size, center[1] - size, center[0] + size, center[1] + size))
 
-        source_img = source_img.resize((self.image_size, self.image_size), Image.ANTIALIAS)
+        source_img = source_img.resize((self.image_size, self.image_size), Image.Resampling.LANCZOS)
         data_dict['source_img'] = data_transform(source_img)[None].to(self.device)
 
         pred_mask = obtain_modnet_mask(data_dict['source_img'][0], self.modnet, ref_size=512)[0]
@@ -160,7 +163,7 @@ class Infer(object):
         pass
 
     @torch.no_grad()
-    def evaluate(self, source_image, driver_image,
+    def evaluate(self, source_image, driver_image, mesh,
                  neutral_pose: bool = False, source_information_for_reuse: dict = None, crop_center=False):
         if source_information_for_reuse is not None:
             data_dict = source_information_for_reuse.get('data_dict')
@@ -173,20 +176,34 @@ class Infer(object):
             data_dict[k] = data_dict[k].to(self.device)
 
         out = self.model(data_dict,
+                         mesh,
                          neutral_pose=neutral_pose,
                          source_information=source_information_for_reuse)
         out['source_information']['data_dict'] = data_dict
         return out
 
     def run_example(self):
-        src_path = 'data/imgs/taras1.jpg'
-        driver_path = 'data/imgs/taras1.jpg'
 
-        driver_img = Image.open(src_path)
-        source_image = Image.open(driver_path)
-        out = self.evaluate(source_image, driver_img, crop_center=True)
-        render_result = tensor2image(out['render_masked'].cpu())
-        shape_result = tensor2image(out['pred_target_shape_img'][0].cpu())
+        src_path = self.args.src_path
+        driver_path = self.args.driver_path
+        expname = self.args.expname
+        mesh_dir = self.args.mesh_dir
+        os.makedirs(os.path.join(self.args.save_dir, expname), exist_ok=True)
+
+        driver_img = Image.open(driver_path)
+        source_image = Image.open(src_path)
+        mesh_paths = glob(mesh_dir + '/*.obj')
+        
+        print(f'Applying appearance from {src_path} and pose from {driver_path} to meshes in {mesh_dir}')
+        i = 0
+        for meshpath in tqdm.tqdm(mesh_paths):
+            mesh = read_obj_to_tensor(meshpath).to(self.device)
+            out = self.evaluate(source_image, driver_img, mesh, crop_center=True)
+            render_result = tensor2image(out['render_masked'].cpu())
+            shape_result = tensor2image(out['pred_target_shape_img'][0].cpu())
+            # pred_img = tensor2image(out['pred_target_img'][0].cpu())
+            save_image(out['pred_target_img'][0].cpu(), os.path.join(self.args.save_dir, expname, f'{i:0>4}.jpg'))
+            i+=1
         print('Successfully rendered')
 
 
@@ -201,13 +218,17 @@ if __name__ == "__main__":
     default_model_path = 'data/rome.pth'
 
     parser = argparse.ArgumentParser(conflict_handler='resolve')
-    parser.add_argument('--save_dir', default='.', type=str)
+    parser.add_argument('--save_dir', default='results', type=str)
     parser.add_argument('--save_render', default='True', type=args_utils.str2bool, choices=[True, False])
     parser.add_argument('--model_checkpoint', default=default_model_path, type=str)
     parser.add_argument('--modnet_path', default=default_modnet_path, type=str)
     parser.add_argument('--random_seed', default=0, type=int)
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--verbose', default='False', type=args_utils.str2bool, choices=[True, False])
+    parser.add_argument('--src_path')
+    parser.add_argument('--driver_path')
+    parser.add_argument('--expname', default='test')
+    parser.add_argument('--mesh_dir', default='test')
     args, _ = parser.parse_known_args()
 
     parser = importlib.import_module(f'src.rome').ROME.add_argparse_args(parser)
